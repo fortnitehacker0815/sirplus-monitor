@@ -25,7 +25,7 @@ jobs:
 
       - name: Katalog prüfen
         env:
-          DASHBOARD_URL: ${{ vars.DASHBOARD_URL }}
+          MAX_PUSH_PER_RUN: ${{ vars.MAX_PUSH_PER_RUN }}
           NOTIFY_TYPES: ${{ vars.NOTIFY_TYPES }}
           MIN_PRICE_CHANGE_PCT: ${{ vars.MIN_PRICE_CHANGE_PCT }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}

@@ -67,7 +67,7 @@ Du kannst einen oder mehrere Kanäle nutzen.
 
 | Variable | Beispiel | Wirkung |
 |---|---|---|
-| `DASHBOARD_URL` | `https://monitor.deine-domain.de` | Link in der Benachrichtigung |
+| `MAX_PUSH_PER_RUN` | `5` | Höchstens so viele Einzel-Push-Nachrichten pro Lauf (Standard 10), der Rest kommt gesammelt in einer Nachricht |
 | `NOTIFY_TYPES` | `new,price_drop` | Nur diese Ereignisse melden (Standard: `new,price_drop,price_up,discount,back_in_stock`) |
 | `MIN_PRICE_CHANGE_PCT` | `5` | Preisänderungen unter 5 % nicht melden; sie erscheinen trotzdem im Dashboard |
 
@@ -76,6 +76,8 @@ Du kannst einen oder mehrere Kanäle nutzen.
 Der erste Lauf legt nur den Ausgangsstand an und verschickt noch keine Benachrichtigungen.
 
 ---
+
+**Push-Nachrichten:** Jede Änderung kommt als eigene Nachricht mit Produktbild. Ein Tipp darauf öffnet direkt die Produktseite im Shop. Die wichtigsten Änderungen (größte Preissenkung, höchster Rabatt) kommen zuerst.
 
 ## Dashboard
 - **Neuigkeiten:** Chronologischer Feed aller Änderungen, filterbar nach Typ. Einträge seit deinem letzten Besuch sind blau markiert.

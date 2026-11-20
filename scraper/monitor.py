@@ -32,6 +32,7 @@ from email.mime.text import MIMEText
 from pathlib import Path
 
 SHOP = os.environ.get("SHOP_URL", "https://sirplus.de").rstrip("/")
+SHOP_NAME = os.environ.get("SHOP_NAME") or "SirPlus"
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "docs" / "data"
 STATE_FILE = DATA / "state.json"        # interner Stand inkl. Preisverlauf
@@ -207,32 +208,75 @@ def event_line(e: dict) -> str:
     return f"{label}: {e['title']} – {price}"
 
 
-def build_message(events: list[dict], dashboard: str | None) -> tuple[str, str]:
-    counts: dict[str, int] = {}
-    for e in events:
-        counts[e["type"]] = counts.get(e["type"], 0) + 1
-    title = "SirPlus: " + ", ".join(f"{n}× {LABELS[k].split(' ', 1)[1]}" for k, n in counts.items())
-    lines = [event_line(e) for e in events[:25]]
-    if len(events) > 25:
-        lines.append(f"… und {len(events) - 25} weitere")
-    if dashboard:
-        lines.append(f"\nDashboard: {dashboard}")
-    return title, "\n".join(lines)
+def rank_events(events: list[dict]) -> list[dict]:
+    """Wichtigstes zuerst: größte Preissenkung, dann höchster Rabatt."""
+    def rank(e):
+        if e.get("old_price") is not None and e.get("change_pct") is not None and e["change_pct"] < 0:
+            return (0, e["change_pct"])
+        return (1, -(discount_pct(e["price"], e["compare_at"]) or 0))
+    return sorted(events, key=rank)
 
 
-def send_ntfy(title: str, body: str, dashboard: str | None):
+def push_title(e: dict) -> str:
+    label = LABELS.get(e["type"], e["type"])
+    if e.get("old_price") is not None and e.get("change_pct") is not None:
+        return f'{SHOP_NAME} · {label} {e["change_pct"]:+.0f} %'
+    d = discount_pct(e["price"], e["compare_at"])
+    return f"{SHOP_NAME} · {label}" + (f" −{d} %" if d else "")
+
+
+def push_body(e: dict) -> str:
+    if e.get("old_price") is not None and e.get("change_pct") is not None:
+        price = f'{eur(e["old_price"])} → {eur(e["price"])}'
+    else:
+        price = eur(e["price"])
+        if e.get("compare_at") and discount_pct(e["price"], e["compare_at"]):
+            price += f" (statt {eur(e['compare_at'])})"
+    return f"{e['title']}\n{price}"
+
+
+def ntfy_publish(payload: dict):
+    """Veröffentlicht per JSON (UTF-8-sicher, unterstützt Klick-Link und Bild)."""
+    server = (os.environ.get("NTFY_SERVER") or "https://ntfy.sh").rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if os.environ.get("NTFY_TOKEN"):
+        headers["Authorization"] = f'Bearer {os.environ["NTFY_TOKEN"]}'
+    req = urllib.request.Request(server + "/", data=json.dumps(payload).encode("utf-8"),
+                                 headers=headers, method="POST")
+    urllib.request.urlopen(req, timeout=20).read()
+
+
+def send_ntfy(events: list[dict]):
+    """Eine Nachricht pro Artikel – Tippen öffnet direkt die Produktseite."""
     topic = os.environ.get("NTFY_TOPIC")
     if not topic:
         return
-    server = (os.environ.get("NTFY_SERVER") or "https://ntfy.sh").rstrip("/")
-    headers = {"Title": title.encode("utf-8"), "Tags": "shopping_cart"}
-    if dashboard:
-        headers["Click"] = dashboard
-    if os.environ.get("NTFY_TOKEN"):
-        headers["Authorization"] = f'Bearer {os.environ["NTFY_TOKEN"]}'
-    req = urllib.request.Request(f"{server}/{topic}", data=body.encode("utf-8"),
-                                 headers=headers, method="POST")
-    urllib.request.urlopen(req, timeout=20).read()
+    limit = int(os.environ.get("MAX_PUSH_PER_RUN") or "10")
+    single, rest = events[:limit], events[limit:]
+    for e in single:
+        payload = {"topic": topic, "title": push_title(e), "message": push_body(e),
+                   "click": e["url"], "tags": ["shopping_cart"]}
+        if e.get("image"):
+            payload["attach"] = e["image"]
+        ntfy_publish(payload)
+        time.sleep(0.5)
+    if rest:
+        lines = [f"• {event_line(e)}" for e in rest[:20]]
+        if len(rest) > 20:
+            lines.append(f"… und {len(rest) - 20} weitere")
+        ntfy_publish({"topic": topic, "title": f"{SHOP_NAME}: {len(rest)} weitere Änderungen",
+                      "message": "\n".join(lines), "tags": ["shopping_cart"]})
+
+
+def text_digest(events: list[dict]) -> tuple[str, str]:
+    counts: dict[str, int] = {}
+    for e in events:
+        counts[e["type"]] = counts.get(e["type"], 0) + 1
+    title = f"{SHOP_NAME}: " + ", ".join(f"{n}× {LABELS[k].split(' ', 1)[1]}" for k, n in counts.items())
+    lines = [f"{event_line(e)}\n{e['url']}" for e in events[:40]]
+    if len(events) > 40:
+        lines.append(f"… und {len(events) - 40} weitere")
+    return title, "\n\n".join(lines)
 
 
 def send_telegram(title: str, body: str):
@@ -241,8 +285,7 @@ def send_telegram(title: str, body: str):
         return
     data = urllib.parse.urlencode({"chat_id": chat, "text": f"{title}\n\n{body}"[:4000],
                                    "disable_web_page_preview": "true"}).encode()
-    urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage",
-                           data=data, timeout=20).read()
+    urllib.request.urlopen(f"https://api.telegram.org/bot{token}/sendMessage", data=data, timeout=20).read()
 
 
 def send_email(title: str, body: str):
@@ -253,25 +296,32 @@ def send_email(title: str, body: str):
     sender = os.environ.get("MAIL_FROM") or user
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"], msg["From"], msg["To"] = title, sender, to
-    port = int(os.environ.get("SMTP_PORT") or "587")
-    with smtplib.SMTP(host, port, timeout=30) as s:
+    with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT") or "587"), timeout=30) as s:
         s.starttls()
         if user:
             s.login(user, os.environ.get("SMTP_PASSWORD", ""))
         s.sendmail(sender, [a.strip() for a in to.split(",")], msg.as_string())
 
 
-def notify(events: list[dict]):
+def select_for_notify(events: list[dict]) -> list[dict]:
     wanted = notify_types()
     events = [e for e in events if e["type"] in wanted]
-    min_drop = float(os.environ.get("MIN_PRICE_CHANGE_PCT") or "0")
+    min_change = float(os.environ.get("MIN_PRICE_CHANGE_PCT") or "0")
     events = [e for e in events
-              if e["type"] not in ("price_drop", "price_up") or abs(e["change_pct"]) >= min_drop]
+              if e["type"] not in ("price_drop", "price_up") or abs(e["change_pct"]) >= min_change]
+    min_disc = float(os.environ.get("MIN_DISCOUNT_PCT") or "0")
+    if min_disc:
+        events = [e for e in events if e["type"] != "new"
+                  or (discount_pct(e["price"], e["compare_at"]) or 0) >= min_disc]
+    return rank_events(events)
+
+
+def notify(events: list[dict]):
+    events = select_for_notify(events)
     if not events:
         return
-    dashboard = os.environ.get("DASHBOARD_URL") or None
-    title, body = build_message(events, dashboard)
-    for fn, args in ((send_ntfy, (title, body, dashboard)),
+    title, body = text_digest(events)
+    for fn, args in ((send_ntfy, (events,)),
                      (send_telegram, (title, body)),
                      (send_email, (title, body))):
         try:
