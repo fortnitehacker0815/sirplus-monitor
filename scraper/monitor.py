@@ -25,6 +25,7 @@ import os
 import smtplib
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -235,37 +236,48 @@ def push_body(e: dict) -> str:
     return f"{e['title']}\n{price}"
 
 
-def ntfy_publish(payload: dict):
-    """Veröffentlicht per JSON (UTF-8-sicher, unterstützt Klick-Link und Bild)."""
+def ntfy_publish(payload: dict) -> bool:
+    """Veröffentlicht per JSON (UTF-8-sicher, mit Klick-Link und Bild).
+    Bei Drosselung durch ntfy (HTTP 429) oder kurzen Störungen: warten und erneut versuchen."""
     server = (os.environ.get("NTFY_SERVER") or "https://ntfy.sh").rstrip("/")
     headers = {"Content-Type": "application/json"}
     if os.environ.get("NTFY_TOKEN"):
         headers["Authorization"] = f'Bearer {os.environ["NTFY_TOKEN"]}'
-    req = urllib.request.Request(server + "/", data=json.dumps(payload).encode("utf-8"),
-                                 headers=headers, method="POST")
-    urllib.request.urlopen(req, timeout=20).read()
+    data = json.dumps(payload).encode("utf-8")
+    for attempt in range(6):
+        try:
+            req = urllib.request.Request(server + "/", data=data, headers=headers, method="POST")
+            urllib.request.urlopen(req, timeout=20).read()
+            return True
+        except urllib.error.HTTPError as e:
+            if e.code == 429 or e.code >= 500:
+                time.sleep(10 * (attempt + 1))
+                continue
+            raise
+        except urllib.error.URLError:
+            time.sleep(5 * (attempt + 1))
+    return False
 
 
 def send_ntfy(events: list[dict]):
-    """Eine Nachricht pro Artikel – Tippen öffnet direkt die Produktseite."""
+    """Jede Änderung als eigene Nachricht – niemals gesammelt.
+    Tippen öffnet direkt die Produktseite. Versand in ruhigem Tempo,
+    damit auch viele Änderungen auf einmal vollständig ankommen."""
     topic = os.environ.get("NTFY_TOPIC")
     if not topic:
         return
-    limit = int(os.environ.get("MAX_PUSH_PER_RUN") or "10")
-    single, rest = events[:limit], events[limit:]
-    for e in single:
+    failed = 0
+    for i, e in enumerate(events):
         payload = {"topic": topic, "title": push_title(e), "message": push_body(e),
                    "click": e["url"], "tags": ["shopping_cart"]}
         if e.get("image"):
             payload["attach"] = e["image"]
-        ntfy_publish(payload)
-        time.sleep(0.5)
-    if rest:
-        lines = [f"• {event_line(e)}" for e in rest[:20]]
-        if len(rest) > 20:
-            lines.append(f"… und {len(rest) - 20} weitere")
-        ntfy_publish({"topic": topic, "title": f"{SHOP_NAME}: {len(rest)} weitere Änderungen",
-                      "message": "\n".join(lines), "tags": ["shopping_cart"]})
+        if not ntfy_publish(payload):
+            failed += 1
+        time.sleep(1.0 if i < 50 else 5.0)   # ntfy erlaubt ca. 60 auf einmal, danach etwa 1 pro 5 s
+    print(f"  ntfy: {len(events) - failed} von {len(events)} Nachrichten zugestellt")
+    if failed:
+        print(f"Warnung: {failed} Nachrichten konnten nicht zugestellt werden", file=sys.stderr)
 
 
 def text_digest(events: list[dict]) -> tuple[str, str]:

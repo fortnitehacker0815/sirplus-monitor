@@ -15,7 +15,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -25,7 +25,6 @@ jobs:
 
       - name: Katalog prüfen
         env:
-          MAX_PUSH_PER_RUN: ${{ vars.MAX_PUSH_PER_RUN }}
           NOTIFY_TYPES: ${{ vars.NOTIFY_TYPES }}
           MIN_PRICE_CHANGE_PCT: ${{ vars.MIN_PRICE_CHANGE_PCT }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
