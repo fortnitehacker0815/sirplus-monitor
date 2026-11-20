@@ -214,7 +214,7 @@ function render(){
   const onSale = catalog.filter(c=>c.discount_pct && c.available);
   const avgOff = onSale.length ? Math.round(onSale.reduce((a,c)=>a+c.discount_pct,0)/onSale.length) : 0;
   const sinceVisit = lastVisit ? real.filter(e=>new Date(e.ts)>new Date(lastVisit)).length : 0;
-  const newList = catalog.filter(isNewInShop);
+  const newList = catalog.filter(c=>c.available && isNewInShop(c));
 
   $("#kpis").innerHTML = [
     [meta.products ?? "–", "Produkte im Shop"],
@@ -227,7 +227,7 @@ function render(){
   $("#n-feed").textContent = real.length;
   $("#n-new").textContent = newList.length;
   $("#n-deals").textContent = onSale.length;
-  $("#n-all").textContent = catalog.length;
+  $("#n-all").textContent = catalog.filter(c=>c.available).length;
   // Pfand und SirPlus-Merch (Magazine) sind keine echten Produkte → ausblenden
   const NOT_PRODUCTS = new Set(["Pfand","Merch"]);
   const cheap = catalog.filter(c=>c.available && c.price!=null && !NOT_PRODUCTS.has(c.type));
@@ -260,7 +260,7 @@ function renderFeed(){
     if(e.type==="price_drop"||e.type==="price_up"){
       right = `<span class="old">${eur(e.old_price)}</span><span class="price">${eur(e.price)}</span><br><span class="pct ${e.change_pct<0?"down":"up"}">${e.change_pct>0?"+":""}${e.change_pct.toLocaleString("de-DE")} %</span>`;
     } else right = priceHtml(e.price, e.compare_at);
-    html += `<a class="ev ${fresh?"fresh":""}" href="#" data-id="${esc(e.id)}" data-url="${esc(e.url)}">
+    html += `<a class="ev ${fresh?"fresh":""}" href="${esc(e.url)}" target="_blank" rel="noopener" title="Im Shop öffnen" data-id="${esc(e.id)}">
       <div class="thumb" style="background-image:url('${esc(imgSmall(e.image))}')"></div>
       <div><div class="t">${esc(e.title)}</div>
       <div class="m">${fresh?'<span class="badge b-fresh">NEU</span>':""}<span class="badge b-${e.type}">${LABEL[e.type]}</span>${fmtTime(e.ts)}</div></div>
@@ -289,17 +289,16 @@ function renderGrid(list, emptyMsg, showDate){
 
 function renderTable(){
   const cats = [...new Set(catalog.map(c=>c.type).filter(Boolean))].sort();
-  let list = catalog.slice();
+  let list = catalog.filter(c=>c.available);
   if(ui.q) list = list.filter(c=>(c.title+" "+c.vendor+" "+c.sku).toLowerCase().includes(ui.q));
   if(ui.cat) list = list.filter(c=>c.type===ui.cat);
-  if(ui.avail) list = list.filter(c=>c.available);
   const [k,dir] = ui.sort;
   list.sort((a,b)=>{const x=a[k]??-1e12, y=b[k]??-1e12; return (typeof x==="string"? x.localeCompare(y,"de") : x-y)*dir;});
   const cols = [["","",""],["title","Produkt",""],["vendor","Marke","hide-sm"],["type","Kategorie","hide-sm"],["compare_at","Streichpreis","num hide-sm"],["price","Preis","num"],["discount_pct","Rabatt","num"],["first_seen","Erfasst","num hide-sm"]];
   const arrow = c => c===k ? (dir>0?" ▲":" ▼") : "";
   $("#view").innerHTML = `<div class="toolbar"><input type="search" id="q" placeholder="Produkt, Marke, SKU …" value="${esc(ui.q)}">
     <select id="cat"><option value="">Alle Kategorien</option>${cats.map(c=>`<option ${c===ui.cat?"selected":""}>${esc(c)}</option>`).join("")}</select>
-    <label style="font-size:14px"><input type="checkbox" id="avail" ${ui.avail?"checked":""}> nur verfügbar</label>
+    
     <span style="color:var(--muted);font-size:13px">${list.length} Einträge</span></div>
     <div class="tablewrap"><table><thead><tr>${cols.map(([c,l,cl])=>`<th class="${cl}" data-sort="${c}">${l}${arrow(c)}</th>`).join("")}</tr></thead><tbody>
     ${list.map(c=>`<tr data-id="${esc(c.id)}"><td><span class="mini" style="background-image:url('${esc(imgSmall(c.image))}')"></span></td>
@@ -311,7 +310,6 @@ function renderTable(){
     </tbody></table></div>`;
   bindSearch(); bindOpen();
   $("#cat").onchange = e=>{ui.cat=e.target.value; render();};
-  $("#avail").onchange = e=>{ui.avail=e.target.checked; render();};
   document.querySelectorAll("th[data-sort]").forEach(th=>th.onclick=()=>{const c=th.dataset.sort; if(!c) return;
     ui.sort = ui.sort[0]===c ? [c,-ui.sort[1]] : [c, ["title","vendor","type"].includes(c)?1:-1]; store.set("sp_sort",ui.sort); render();});
 }
@@ -321,7 +319,13 @@ function bindSearch(){
   q.oninput = () => { ui.q=q.value.trim().toLowerCase(); const pos=q.selectionStart; render(); const n=$("#q"); n.focus(); n.setSelectionRange(pos,pos); };
 }
 function bindOpen(){
-  document.querySelectorAll("[data-id]").forEach(el=>el.onclick=ev=>{ev.preventDefault(); openItem(el.dataset.id, el.dataset.url);});
+  // Direkt zur Produktseite im Shop (neuer Tab) – ohne Zwischen-Pop-up
+  document.querySelectorAll("[data-id]").forEach(el=>{
+    if(el.tagName==="A") return;            // Feed-Einträge sind echte Links
+    const c=byId.get(el.dataset.id), url=(c&&c.url)||el.dataset.url;
+    el.title="Im Shop öffnen";
+    el.onclick=()=>{ if(url) window.open(url,"_blank","noopener"); };
+  });
 }
 
 function chartSvg(h){
