@@ -126,6 +126,7 @@ footer{color:var(--muted);font-size:12px;margin-top:40px;text-align:center}
     <button class="tab on" data-tab="feed">Neuigkeiten <span class="n" id="n-feed"></span></button>
     <button class="tab" data-tab="new">Neu im Shop <span class="n" id="n-new"></span></button>
     <button class="tab" data-tab="deals">Top-Rabatte <span class="n" id="n-deals"></span></button>
+    <button class="tab" data-tab="cheap">Günstigste <span class="n" id="n-cheap"></span></button>
     <button class="tab" data-tab="all">Alle Produkte <span class="n" id="n-all"></span></button>
   </nav>
 
@@ -227,9 +228,14 @@ function render(){
   $("#n-new").textContent = newList.length;
   $("#n-deals").textContent = onSale.length;
   $("#n-all").textContent = catalog.length;
+  // Pfand und SirPlus-Merch (Magazine) sind keine echten Produkte → ausblenden
+  const NOT_PRODUCTS = new Set(["Pfand","Merch"]);
+  const cheap = catalog.filter(c=>c.available && c.price!=null && !NOT_PRODUCTS.has(c.type));
+  $("#n-cheap").textContent = cheap.length;
   document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("on", t.dataset.tab===ui.tab));
   ({feed:renderFeed, new:()=>renderGrid(newList.sort((a,b)=>new Date(b.published_at||b.first_seen)-new Date(a.published_at||a.first_seen)), "Keine neuen Produkte in den letzten 14 Tagen.", true),
     deals:()=>renderGrid(onSale.sort((a,b)=>b.discount_pct-a.discount_pct), "Aktuell keine rabattierten Produkte."),
+    cheap:()=>renderGrid(cheap.sort((a,b)=>a.price-b.price || (b.discount_pct||0)-(a.discount_pct||0)), "Aktuell keine verfügbaren Produkte."),
     all:renderTable})[ui.tab]();
 }
 

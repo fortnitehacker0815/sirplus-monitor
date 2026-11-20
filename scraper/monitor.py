@@ -190,7 +190,8 @@ LABELS = {
 
 
 def notify_types() -> set[str]:
-    raw = os.environ.get("NOTIFY_TYPES", "new,price_drop,price_up,discount,back_in_stock")
+    # GitHub übergibt nicht gesetzte Variablen als "" → dann Standardwert nehmen
+    raw = os.environ.get("NOTIFY_TYPES") or "new,price_drop,price_up,discount,back_in_stock"
     return {t.strip() for t in raw.split(",") if t.strip()}
 
 
@@ -223,7 +224,7 @@ def send_ntfy(title: str, body: str, dashboard: str | None):
     topic = os.environ.get("NTFY_TOPIC")
     if not topic:
         return
-    server = os.environ.get("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
+    server = (os.environ.get("NTFY_SERVER") or "https://ntfy.sh").rstrip("/")
     headers = {"Title": title.encode("utf-8"), "Tags": "shopping_cart"}
     if dashboard:
         headers["Click"] = dashboard
@@ -249,10 +250,10 @@ def send_email(title: str, body: str):
     if not (host and to):
         return
     user = os.environ.get("SMTP_USER", "")
-    sender = os.environ.get("MAIL_FROM", user)
+    sender = os.environ.get("MAIL_FROM") or user
     msg = MIMEText(body, "plain", "utf-8")
     msg["Subject"], msg["From"], msg["To"] = title, sender, to
-    port = int(os.environ.get("SMTP_PORT", "587"))
+    port = int(os.environ.get("SMTP_PORT") or "587")
     with smtplib.SMTP(host, port, timeout=30) as s:
         s.starttls()
         if user:
@@ -263,7 +264,7 @@ def send_email(title: str, body: str):
 def notify(events: list[dict]):
     wanted = notify_types()
     events = [e for e in events if e["type"] in wanted]
-    min_drop = float(os.environ.get("MIN_PRICE_CHANGE_PCT", "0"))
+    min_drop = float(os.environ.get("MIN_PRICE_CHANGE_PCT") or "0")
     events = [e for e in events
               if e["type"] not in ("price_drop", "price_up") or abs(e["change_pct"]) >= min_drop]
     if not events:
